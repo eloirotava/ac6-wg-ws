@@ -1,0 +1,73 @@
+name: AC6 WireGuard and compact WSS client
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - run: |
+          zig build --release -Dtarget=arm-linux-musleabi -Dcpu=cortex_a7 -p out
+          file out/bin/wsudp
+          ls -l out/bin/wsudp
+          sha256sum out/bin/wsudp > out/client.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wsudp-arm
+          path: out/
+          retention-days: 3
+  modules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y zstd libelf-dev bc flex bison libssl-dev kmod
+      - name: Exact image SDK
+        run: |
+          curl -fL --retry 3 https://github.com/eloirotava/openwrt-tenda-ac6/releases/download/tenda-ac6-95/openwrt-sdk-bcm53xx-generic_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst -o sdk.tar.zst
+          echo "0d8938b64bff13ed99ed49ddd5ca78821c4b22b82127ac466e984e5cd756bac2  sdk.tar.zst" | sha256sum -c -
+          mkdir sdk
+          tar -I zstd -xf sdk.tar.zst -C sdk --strip-components=1
+          rm sdk.tar.zst
+      - name: Compile WireGuard modules and tool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export STAGING_DIR="$PWD/sdk/staging_dir"
+          T=$(echo "$PWD"/sdk/staging_dir/toolchain-*)
+          export PATH="$T/bin:$PATH"
+          LX=$(echo "$PWD"/sdk/build_dir/target-*/linux-*/linux-6.12.74)
+          cp "$LX/.config" kernel-before.config
+          "$LX/scripts/config" --file "$LX/.config" --module WIREGUARD
+          make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- olddefconfig
+          make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- -j2 modules_prepare
+          make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- -j2 modules > kernel-build.log 2>&1 || { tail -100 kernel-build.log; exit 1; }
+          mkdir -p out/modules
+          python3 scripts/collect_modules.py "$LX" out/modules
+          for m in out/modules/*.ko; do arm-openwrt-linux-muslgnueabi-strip --strip-debug "$m"; done
+          curl -fL --retry 3 https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20250521.tar.xz -o wg.tar.xz
+          echo "b6f2628b85b1b23cc06517ec9c74f82d52c4cdbd020f3dd2f00c972a1782950e  wg.tar.xz" | sha256sum -c -
+          tar -xf wg.tar.xz
+          make -C wireguard-tools-1.0.20250521/src -j2 CC=arm-openwrt-linux-muslgnueabi-gcc WITH_WGQUICK=no
+          cp wireguard-tools-1.0.20250521/src/wg out/
+          arm-openwrt-linux-muslgnueabi-strip out/wg
+          cp "$LX/.config" out/kernel.config
+          find out -type f -exec sha256sum {} + > checksums.txt
+          cp checksums.txt out/
+          du -ch out/modules/*.ko out/wg | tail -1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ac6-wireguard
+          path: |
+            out/
+            kernel-build.log
+          retention-days: 3

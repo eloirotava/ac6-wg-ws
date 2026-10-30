@@ -1,0 +1,5 @@
+out/
+sdk/
+zig-out/
+.zig-cache/
+*.tar.*
