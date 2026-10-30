@@ -70,7 +70,7 @@ jobs:
           mkdir -p out/modules
           python3 scripts/collect_modules.py "$B" out/modules
           for m in out/modules/*.ko; do arm-openwrt-linux-muslgnueabi-strip --strip-debug "$m"; done
-          curl -fL --retry 3 https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20250521.tar.xz -o wg.tar.xz
+          curl -fL --retry 3 https://sources.openwrt.org/wireguard-tools-1.0.20250521.tar.xz -o wg.tar.xz
           echo "b6f2628b85b1b23cc06517ec9c74f82d52c4cdbd020f3dd2f00c972a1782950e  wg.tar.xz" | sha256sum -c -
           tar -xf wg.tar.xz
           make -C wireguard-tools-1.0.20250521/src -j2 CC=arm-openwrt-linux-muslgnueabi-gcc WITH_WGQUICK=no
