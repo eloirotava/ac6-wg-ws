@@ -1,12 +1,15 @@
 import subprocess,sys
 from pathlib import Path
-import shutil
+import shutil, os
 kernel,out=map(Path,sys.argv[1:3])
 def key(s):return s.replace("-","_")
 all_modules={}
-for p in kernel.rglob("*.ko"):
- name=subprocess.check_output(["modinfo","-F","name",str(p)],text=True).strip()
- all_modules[key(name)]=p
+for base,dirs,files in os.walk(kernel,followlinks=True):
+ for filename in files:
+  if not filename.endswith(".ko"):continue
+  p=Path(base)/filename
+  name=subprocess.check_output(["modinfo","-F","name",str(p)],text=True).strip()
+  all_modules[key(name)]=p
 order=[];seen=set()
 def visit(name):
  name=key(name)

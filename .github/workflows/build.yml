@@ -55,9 +55,20 @@ jobs:
           "$LX/scripts/config" --file "$LX/.config" --module WIREGUARD
           make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- olddefconfig
           make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- -j2 modules_prepare
-          make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- -j2 modules > kernel-build.log 2>&1 || { tail -100 kernel-build.log; exit 1; }
+          # Build only VPN dependencies, never unrelated patched network drivers.
+          B="$PWD/vpn-modules"
+          mkdir "$B"
+          ln -s "$LX/lib/crypto" "$B/cryptolib"
+          ln -s "$LX/crypto" "$B/cryptoapi"
+          ln -s "$LX/arch/arm/crypto" "$B/armcrypto"
+          ln -s "$LX/drivers/net/wireguard" "$B/wireguard"
+          cp "$LX/net/ipv4/udp_tunnel_core.c" "$LX/net/ipv4/udp_tunnel_nic.c" "$LX/net/ipv6/ip6_udp_tunnel.c" "$B/"
+          printf '%s\n' 'obj-m += cryptolib/ cryptoapi/ armcrypto/ wireguard/ udp_tunnel.o ip6_udp_tunnel.o' 'udp_tunnel-y := udp_tunnel_core.o udp_tunnel_nic.o' > "$B/Makefile"
+          cp "$LX/Module.symvers" "$LX/Module.symvers.original"
+          awk '$3 == "vmlinux"' "$LX/Module.symvers.original" > "$LX/Module.symvers"
+          make -C "$LX" ARCH=arm CROSS_COMPILE=arm-openwrt-linux-muslgnueabi- M="$B" -j2 modules > kernel-build.log 2>&1 || { tail -100 kernel-build.log; exit 1; }
           mkdir -p out/modules
-          python3 scripts/collect_modules.py "$LX" out/modules
+          python3 scripts/collect_modules.py "$B" out/modules
           for m in out/modules/*.ko; do arm-openwrt-linux-muslgnueabi-strip --strip-debug "$m"; done
           curl -fL --retry 3 https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20250521.tar.xz -o wg.tar.xz
           echo "b6f2628b85b1b23cc06517ec9c74f82d52c4cdbd020f3dd2f00c972a1782950e  wg.tar.xz" | sha256sum -c -
